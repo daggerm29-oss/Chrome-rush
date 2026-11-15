@@ -238,8 +238,9 @@ export class GameEngine {
   resume() {
     if (this.mode !== 'paused') return
     this.audio.resume()
-    this.setMode(this.modeBeforePause === 'playing' ? 'countdown' : this.modeBeforePause)
-    if (this.mode === 'countdown') {
+    const target: EngineMode = this.modeBeforePause === 'playing' ? 'countdown' : this.modeBeforePause
+    this.setMode(target)
+    if (target === 'countdown') {
       this.countdown = 1.5
       this.lastCountdownValue = -1
     }

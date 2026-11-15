@@ -41,13 +41,12 @@ const escape = (s: string) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&
 
 export async function POST(req: Request) {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET
-  if (expected) {
-    const got = req.headers.get('x-telegram-bot-api-secret-token') ?? ''
-    const a = Buffer.from(got)
-    const b = Buffer.from(expected)
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return NextResponse.json({ ok: false }, { status: 401 })
-    }
+  if (!expected) return NextResponse.json({ ok: false }, { status: 503 })
+  const got = req.headers.get('x-telegram-bot-api-secret-token') ?? ''
+  const a = Buffer.from(got)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return NextResponse.json({ ok: false }, { status: 401 })
   }
 
   let update: TgUpdate

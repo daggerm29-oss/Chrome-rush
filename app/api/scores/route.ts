@@ -2,21 +2,25 @@ import { sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db, schema } from '@/lib/db'
+import { PHYSICS } from '@/lib/game/difficulty'
 import { resolveIdentity } from '@/lib/identity'
 import { getPlayerStats } from '@/lib/leaderboard'
+
+const MAX_RUN_MS = 1000 * 60 * 90
+const MAX_RUNS_PER_MINUTE = 12
 
 const RunSchema = z.object({
   runId: z.string().uuid(),
   score: z.number().int().min(0).max(50_000_000),
   distance: z.number().int().min(0).max(1_000_000),
   crystals: z.number().int().min(0).max(200_000),
-  durationMs: z.number().int().min(0).max(1000 * 60 * 60 * 4),
-  seed: z.number().int().min(0).max(2 ** 31),
+  durationMs: z.number().int().min(0).max(MAX_RUN_MS),
+  seed: z.number().int().min(0).max(2 ** 31 - 1),
   livesUsed: z.number().int().min(0).max(3),
   maxCombo: z.number().int().min(0).max(100_000).optional(),
 })
 
-const MAX_SPEED = 24.5
+const MAX_SPEED = PHYSICS.maxSpeed
 
 /** Plausibility checks derived from the game's physics and scoring rules. */
 function isPlausible(run: z.infer<typeof RunSchema>) {
@@ -44,63 +48,83 @@ export async function POST(req: Request) {
   const run = parsed.data
   const valid = isPlausible(run)
 
-  const previous = await getPlayerStats(identity.id)
+  try {
+    const [{ recent }] = await db
+      .select({ recent: sql<number>`count(*)::int` })
+      .from(schema.gameRuns)
+      .where(
+        sql`${schema.gameRuns.playerId} = ${identity.id} and ${schema.gameRuns.createdAt} > now() - interval '1 minute'`,
+      )
+    if (recent >= MAX_RUNS_PER_MINUTE) {
+      return NextResponse.json({ error: 'Too many runs, slow down' }, { status: 429, headers: { 'Retry-After': '30' } })
+    }
 
-  const inserted = await db
-    .insert(schema.gameRuns)
-    .values({
-      id: run.runId,
-      playerId: identity.id,
-      score: run.score,
-      distance: run.distance,
-      crystals: run.crystals,
-      durationMs: run.durationMs,
-      seed: run.seed,
-      livesUsed: run.livesUsed,
-      valid,
+    const previous = await getPlayerStats(identity.id)
+
+    const duplicate = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(schema.gameRuns)
+        .values({
+          id: run.runId,
+          playerId: identity.id,
+          score: run.score,
+          distance: run.distance,
+          crystals: run.crystals,
+          durationMs: run.durationMs,
+          seed: run.seed,
+          livesUsed: run.livesUsed,
+          valid,
+        })
+        .onConflictDoNothing()
+        .returning({ id: schema.gameRuns.id })
+
+      if (inserted.length === 0) return true
+
+      const best = valid ? run.score : 0
+      const bestDistance = valid ? run.distance : 0
+      const bestTime = valid ? run.durationMs : 0
+
+      await tx
+        .insert(schema.players)
+        .values({
+          id: identity.id,
+          displayName: identity.displayName,
+          username: identity.username,
+          source: identity.source,
+          bestScore: best,
+          bestDistance,
+          bestTimeMs: bestTime,
+          totalGames: 1,
+          totalCrystals: valid ? run.crystals : 0,
+          totalDistance: valid ? run.distance : 0,
+        })
+        .onConflictDoUpdate({
+          target: schema.players.id,
+          set: {
+            displayName: identity.displayName,
+            username: identity.username,
+            bestScore: sql`greatest(${schema.players.bestScore}, ${best})`,
+            bestDistance: sql`greatest(${schema.players.bestDistance}, ${bestDistance})`,
+            bestTimeMs: sql`greatest(${schema.players.bestTimeMs}, ${bestTime})`,
+            totalGames: sql`${schema.players.totalGames} + 1`,
+            totalCrystals: sql`${schema.players.totalCrystals} + ${valid ? run.crystals : 0}`,
+            totalDistance: sql`${schema.players.totalDistance} + ${valid ? run.distance : 0}`,
+            lastActive: sql`now()`,
+          },
+        })
+      return false
     })
-    .onConflictDoNothing()
-    .returning({ id: schema.gameRuns.id })
 
-  if (inserted.length === 0) return NextResponse.json({ error: 'Run already submitted' }, { status: 409 })
+    if (duplicate) return NextResponse.json({ error: 'Run already submitted' }, { status: 409 })
 
-  const best = valid ? run.score : 0
-  const bestDistance = valid ? run.distance : 0
-  const bestTime = valid ? run.durationMs : 0
-
-  await db
-    .insert(schema.players)
-    .values({
-      id: identity.id,
-      displayName: identity.displayName,
-      username: identity.username,
-      source: identity.source,
-      bestScore: best,
-      bestDistance,
-      bestTimeMs: bestTime,
-      totalGames: 1,
-      totalCrystals: valid ? run.crystals : 0,
-      totalDistance: valid ? run.distance : 0,
+    const stats = await getPlayerStats(identity.id)
+    return NextResponse.json({
+      accepted: valid,
+      isNewBest: valid && run.score > (previous?.bestScore ?? 0),
+      stats,
     })
-    .onConflictDoUpdate({
-      target: schema.players.id,
-      set: {
-        displayName: identity.displayName,
-        username: identity.username,
-        bestScore: sql`greatest(${schema.players.bestScore}, ${best})`,
-        bestDistance: sql`greatest(${schema.players.bestDistance}, ${bestDistance})`,
-        bestTimeMs: sql`greatest(${schema.players.bestTimeMs}, ${bestTime})`,
-        totalGames: sql`${schema.players.totalGames} + 1`,
-        totalCrystals: sql`${schema.players.totalCrystals} + ${valid ? run.crystals : 0}`,
-        totalDistance: sql`${schema.players.totalDistance} + ${valid ? run.distance : 0}`,
-        lastActive: sql`now()`,
-      },
-    })
-
-  const stats = await getPlayerStats(identity.id)
-  return NextResponse.json({
-    accepted: valid,
-    isNewBest: valid && run.score > (previous?.bestScore ?? 0),
-    stats,
-  })
+  } catch (error) {
+    console.error('[scores] failed to save run', error)
+    return NextResponse.json({ error: 'Could not save run' }, { status: 500 })
+  }
 }
