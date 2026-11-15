@@ -1,4 +1,20 @@
-import { bigint, boolean, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { bigint, boolean, integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
+
+export const tgGroups = pgTable('tg_groups', {
+  chatId: text('chat_id').primaryKey(),
+  title: text('title'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const tgPlayNotices = pgTable(
+  'tg_play_notices',
+  {
+    chatId: text('chat_id').notNull(),
+    playerId: text('player_id').notNull(),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.chatId, t.playerId] })],
+)
 
 export const players = pgTable('players', {
   id: text('id').primaryKey(),
@@ -25,5 +41,6 @@ export const gameRuns = pgTable('game_runs', {
   seed: integer('seed').notNull(),
   livesUsed: integer('lives_used').notNull().default(0),
   valid: boolean('valid').notNull().default(true),
+  chatId: text('chat_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

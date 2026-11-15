@@ -59,6 +59,13 @@ export interface SubmitResponse {
   stats: PlayerStatsDto | null
 }
 
+/** Tells the group (if the Mini App was opened from one) that this player started a run. */
+export function notifyPlaying() {
+  const app = getWebApp()
+  if (!app?.initDataUnsafe.start_param?.startsWith('g')) return
+  void fetch('/api/telegram/playing', { method: 'POST', headers: identityHeaders() }).catch(() => undefined)
+}
+
 export async function submitRun(run: RunResult): Promise<SubmitResponse> {
   const res = await fetch('/api/scores', {
     method: 'POST',

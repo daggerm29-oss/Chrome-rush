@@ -1,10 +1,11 @@
-import { sql } from 'drizzle-orm'
-import { NextResponse } from 'next/server'
+import { desc, sql } from 'drizzle-orm'
+import { after, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db, schema } from '@/lib/db'
 import { PHYSICS } from '@/lib/game/difficulty'
 import { resolveIdentity } from '@/lib/identity'
 import { getPlayerStats } from '@/lib/leaderboard'
+import { announceRecords, resolveRegisteredGroup } from '@/lib/telegram/notify'
 
 const MAX_RUN_MS = 1000 * 60 * 90
 const MAX_RUNS_PER_MINUTE = 12
@@ -61,6 +62,22 @@ export async function POST(req: Request) {
 
     const previous = await getPlayerStats(identity.id)
 
+    const groupChatId = await resolveRegisteredGroup(identity.groupChatId)
+    const [topPlayer] = valid
+      ? await db
+          .select({ name: schema.players.displayName, score: schema.players.bestScore })
+          .from(schema.players)
+          .orderBy(desc(schema.players.bestScore))
+          .limit(1)
+      : []
+    const [{ groupBest }] =
+      valid && groupChatId
+        ? await db
+            .select({ groupBest: sql<number>`coalesce(max(${schema.gameRuns.score}), 0)::int` })
+            .from(schema.gameRuns)
+            .where(sql`${schema.gameRuns.chatId} = ${groupChatId} and ${schema.gameRuns.valid}`)
+        : [{ groupBest: 0 }]
+
     const duplicate = await db.transaction(async (tx) => {
       const inserted = await tx
         .insert(schema.gameRuns)
@@ -74,6 +91,7 @@ export async function POST(req: Request) {
           seed: run.seed,
           livesUsed: run.livesUsed,
           valid,
+          chatId: groupChatId,
         })
         .onConflictDoNothing()
         .returning({ id: schema.gameRuns.id })
@@ -116,6 +134,23 @@ export async function POST(req: Request) {
     })
 
     if (duplicate) return NextResponse.json({ error: 'Run already submitted' }, { status: 409 })
+
+    if (valid && run.score > 0) {
+      after(async () => {
+        try {
+          await announceRecords({
+            player: identity,
+            score: run.score,
+            distance: run.distance,
+            groupChatId,
+            previousGlobal: topPlayer && topPlayer.score > 0 ? topPlayer : null,
+            previousGroupBest: groupBest,
+          })
+        } catch (error) {
+          console.error('[scores] record announcement failed', error)
+        }
+      })
+    }
 
     const stats = await getPlayerStats(identity.id)
     return NextResponse.json({

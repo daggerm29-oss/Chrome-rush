@@ -2,7 +2,10 @@
 
 interface TelegramWebApp {
   initData: string
-  initDataUnsafe: { user?: { id: number; first_name: string; last_name?: string; username?: string } }
+  initDataUnsafe: {
+    user?: { id: number; first_name: string; last_name?: string; username?: string }
+    start_param?: string
+  }
   version: string
   platform: string
   isExpanded: boolean
