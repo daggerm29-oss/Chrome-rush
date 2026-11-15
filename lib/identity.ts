@@ -27,16 +27,17 @@ export function sanitizeName(raw: string | null | undefined, fallback: string) {
 export function resolveIdentity(headers: Headers): PlayerIdentity | null {
   const initData = headers.get('x-tg-init-data')
   const token = process.env.TELEGRAM_BOT_TOKEN
-  if (initData && token) {
-    const user = verifyInitData(initData, token)
-    if (user) {
-      const full = [user.first_name, user.last_name].filter(Boolean).join(' ')
-      return {
-        id: `tg:${user.id}`,
-        displayName: sanitizeName(full || user.username, `Pilot ${String(user.id).slice(-4)}`),
-        username: user.username ?? null,
-        source: 'telegram',
-      }
+  if (initData) {
+    // Never fall back to a guest identity when Telegram data is present but invalid or expired;
+    // that would silently credit the run to a different account.
+    const user = token ? verifyInitData(initData, token) : null
+    if (!user) return null
+    const full = [user.first_name, user.last_name].filter(Boolean).join(' ')
+    return {
+      id: `tg:${user.id}`,
+      displayName: sanitizeName(full || user.username, `Pilot ${String(user.id).slice(-4)}`),
+      username: user.username ?? null,
+      source: 'telegram',
     }
   }
 

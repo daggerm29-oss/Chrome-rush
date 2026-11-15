@@ -1,5 +1,5 @@
 import 'server-only'
-import { desc, eq, gt, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, lt, or, sql } from 'drizzle-orm'
 import { db, schema } from './db'
 import type { PlayerIdentity } from './identity'
 
@@ -26,6 +26,10 @@ export interface PlayerStats {
 
 const { players, gameRuns } = schema
 
+/** Players ranked above a given score; ties break by earliest account, matching the list ordering. */
+const ahead = (score: number, createdAt: Date) =>
+  or(gt(players.bestScore, score), and(eq(players.bestScore, score), lt(players.createdAt, createdAt)))
+
 export async function getLeaderboard(period: Period, me: PlayerIdentity | null, limit = 50) {
   if (period === 'all') {
     const rows = await db
@@ -48,7 +52,7 @@ export async function getLeaderboard(period: Period, me: PlayerIdentity | null, 
         const [{ count }] = await db
           .select({ count: sql<number>`count(*)::int` })
           .from(players)
-          .where(gt(players.bestScore, row.bestScore))
+          .where(ahead(row.bestScore, row.createdAt))
         mine = { rank: count + 1, name: row.displayName, score: row.bestScore, distance: row.bestDistance, isMe: true }
       }
     }
@@ -64,7 +68,7 @@ export async function getLeaderboard(period: Period, me: PlayerIdentity | null, 
     )
     select b.player_id, p.display_name as name, b.score, b.distance
     from best b join ${players} p on p.id = b.player_id
-    order by b.score desc
+    order by b.score desc, b.distance desc, b.player_id
   `)
   const all = daily.rows.map((r, i) => ({
     rank: i + 1,
@@ -84,7 +88,7 @@ export async function getPlayerStats(id: string): Promise<PlayerStats | null> {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(players)
-      .where(gt(players.bestScore, row.bestScore))
+      .where(ahead(row.bestScore, row.createdAt))
     rank = count + 1
   }
   return {
