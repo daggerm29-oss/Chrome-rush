@@ -1,8 +1,30 @@
 import * as THREE from 'three'
-import { droneCenter, pistonBottom } from './hazards'
+import {
+  BLOCK_HEIGHT,
+  droneCenter,
+  FALLING_BLOCK_HEIGHT,
+  fallingBlockBottom,
+  fallingBlockWarning,
+  flipGateLocked,
+  gateColor,
+  isGate,
+  pistonBottom,
+  ROLLER_HEIGHT,
+  SPIKE_FIELD_HEIGHT,
+  TOWER_HEIGHT,
+} from './hazards'
 import { PHASE_COLORS } from './player-model'
 import { alternatingProgress, PLATFORM_THICKNESS, platformColor, platformTop } from './surfaces'
-import type { CrystalSpec, ObstacleKind, ObstacleSpec, PlatformSpec, PowerUpSpec, PowerUpType, SurfaceColor } from './types'
+import type {
+  CrystalSpec,
+  ObstacleKind,
+  ObstacleSpec,
+  Phase,
+  PlatformSpec,
+  PowerUpSpec,
+  PowerUpType,
+  SurfaceColor,
+} from './types'
 
 const NEUTRAL = new THREE.Color('#16171f')
 const NEUTRAL_EDGE = new THREE.Color('#5b6475')
@@ -121,6 +143,26 @@ export class WorldView {
       v.edgeMat.color.copy(c)
       v.edgeMat.emissive.copy(c).multiplyScalar(intensity)
     }
+  }
+
+  /**
+   * Multicolour tiles telegraph their flips: the rails always show the colour the tile is about to become,
+   * and for the last stretch of each cycle the whole tile flashes between both colours, faster and faster.
+   */
+  private paintAlternating(v: PlatformView, current: Phase, p: PlatformSpec, prog: number, t: number) {
+    const next: Phase = current === 'solar' ? 'ion' : 'solar'
+    const warnSeconds = Math.min(p.period * 0.7, Math.max(0.55, p.period * 0.45))
+    const warnStart = 1 - warnSeconds / p.period
+    const warn = prog > warnStart ? (prog - warnStart) / (1 - warnStart) : 0
+    const blink = warn > 0 ? 0.5 + 0.5 * Math.sin(t * (12 + warn * 30)) : 0
+    const mix = warn > 0 ? blink * (0.45 + 0.55 * warn) : 0
+    const cur = PHASE_COLORS[current]
+    const nxt = PHASE_COLORS[next]
+    v.bodyMat.color.copy(cur).lerp(nxt, mix)
+    v.bodyMat.emissive.copy(v.bodyMat.color).multiplyScalar(0.28 + warn * 0.5)
+    v.bodyMat.metalness = 0.1
+    v.edgeMat.color.copy(nxt)
+    v.edgeMat.emissive.copy(nxt).multiplyScalar(0.8 + warn * 1.8)
   }
 
   addPlatform(p: PlatformSpec) {
@@ -309,6 +351,110 @@ export class WorldView {
         view.animated = body
         break
       }
+      case 'block': {
+        const body = new THREE.Mesh(unitBox, this.frameMat)
+        body.scale.set(2.6, BLOCK_HEIGHT, 1)
+        body.position.y = BLOCK_HEIGHT / 2
+        body.castShadow = true
+        group.add(body)
+        for (const y of [BLOCK_HEIGHT, 0.5]) {
+          const stripe = new THREE.Mesh(unitBox, this.hazardMat)
+          stripe.scale.set(2.65, 0.1, 1.05)
+          stripe.position.y = y
+          group.add(stripe)
+        }
+        break
+      }
+      case 'tower': {
+        const body = new THREE.Mesh(unitBox, this.frameMat)
+        body.scale.set(2.2, TOWER_HEIGHT, 1)
+        body.position.y = TOWER_HEIGHT / 2
+        body.castShadow = true
+        group.add(body)
+        for (const y of [TOWER_HEIGHT, TOWER_HEIGHT * 0.66, TOWER_HEIGHT * 0.33]) {
+          const stripe = new THREE.Mesh(unitBox, this.hazardMat)
+          stripe.scale.set(2.25, 0.1, 1.05)
+          stripe.position.y = y
+          group.add(stripe)
+        }
+        break
+      }
+      case 'spikeField': {
+        const plate = new THREE.Mesh(unitBox, this.frameMat)
+        plate.scale.set(3.4, 0.1, 3.2)
+        plate.position.y = 0.05
+        group.add(plate)
+        const geo = new THREE.ConeGeometry(0.26, SPIKE_FIELD_HEIGHT - 0.1, 4)
+        for (let row = -1; row <= 1; row++) {
+          for (let i = -2; i <= 2; i++) {
+            const s = new THREE.Mesh(geo, this.hazardMat)
+            s.position.set(i * 0.62 + (row % 2 === 0 ? 0 : 0.31), 0.1 + (SPIKE_FIELD_HEIGHT - 0.1) / 2, row * 1.1)
+            group.add(s)
+          }
+        }
+        break
+      }
+      case 'roller': {
+        const spin = new THREE.Group()
+        const hex = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 2.6, 6), this.metalMat)
+        hex.rotation.z = Math.PI / 2
+        hex.castShadow = true
+        spin.add(hex)
+        for (const sx of [-1, 1]) {
+          const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.76, 0.76, 0.12, 6), this.hazardMat)
+          ring.rotation.z = Math.PI / 2
+          ring.position.x = sx * 1.3
+          spin.add(ring)
+        }
+        spin.position.y = ROLLER_HEIGHT / 2
+        group.add(spin)
+        view.animated = spin
+        break
+      }
+      case 'fallingBlock': {
+        const block = new THREE.Group()
+        const body = new THREE.Mesh(unitBox, this.frameMat)
+        body.scale.set(2.4, FALLING_BLOCK_HEIGHT, 1.2)
+        body.castShadow = true
+        block.add(body)
+        for (const y of [-FALLING_BLOCK_HEIGHT / 2, FALLING_BLOCK_HEIGHT / 2]) {
+          const stripe = new THREE.Mesh(unitBox, this.hazardMat)
+          stripe.scale.set(2.45, 0.1, 1.25)
+          stripe.position.y = y
+          block.add(stripe)
+        }
+        group.add(block)
+        view.animated = block
+        const pad = new THREE.Mesh(
+          new THREE.PlaneGeometry(2.4, 1.2),
+          new THREE.MeshBasicMaterial({ color: '#ff2d55', transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+        )
+        pad.rotation.x = -Math.PI / 2
+        pad.position.y = 0.05
+        group.add(pad)
+        view.extra = pad
+        break
+      }
+      case 'autoGate': {
+        const discMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 1.4, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false })
+        view.mat = discMat
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(1.9, 28), discMat)
+        disc.position.y = 2
+        group.add(disc)
+        const ringMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 2.6 })
+        const rings = new THREE.Group()
+        for (let i = -1; i <= 1; i++) {
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(1.95 - Math.abs(i) * 0.12, 0.07, 6, 28), ringMat)
+          ring.position.z = i * 0.5
+          rings.add(ring)
+        }
+        rings.position.y = 2
+        group.add(rings)
+        view.extra = rings
+        ;(view as ObstacleView & { edgeMat: THREE.MeshStandardMaterial }).edgeMat = ringMat
+        break
+      }
+      case 'flipGate':
       case 'colorGate': {
         const mat = new THREE.MeshStandardMaterial({ color: '#ffb020', emissive: '#ffb020', emissiveIntensity: 1.6, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false })
         view.mat = mat
@@ -349,7 +495,7 @@ export class WorldView {
       view.group.scale.set(1, scale * 0.85, scale * 0.85)
       view.group.position.y = o.y + 0.2 * scale
     } else view.group.scale.set(1, 1, 1)
-    if (o.kind === 'colorGate' && view.mat) {
+    if (isGate(o.kind) && view.mat) {
       const c = PHASE_COLORS[o.color]
       view.mat.color.copy(c)
       view.mat.emissive.copy(c)
@@ -443,9 +589,7 @@ export class WorldView {
       const top = platformTop(p, t)
       v.group.position.y = top
       if (p.kind === 'alternating') {
-        const prog = alternatingProgress(p, t)
-        const warn = prog > 0.68 ? 0.4 + 0.6 * Math.abs(Math.sin(prog * 40)) : 1
-        this.paintPlatform(v, platformColor(p, t), warn)
+        this.paintAlternating(v, platformColor(p, t) as Phase, p, alternatingProgress(p, t), t)
       } else if (p.kind === 'collapsing' && p.touchedAt >= 0 && p.dropOffset === 0) {
         v.group.rotation.z = Math.sin(t * 60) * 0.02
       } else if (p.kind === 'collapsing' && p.dropOffset < 0) {
@@ -477,6 +621,38 @@ export class WorldView {
         case 'colorGate':
           if (view.mat) view.mat.opacity = 0.26 + Math.sin(t * 6 + o.id) * 0.08
           break
+        case 'flipGate': {
+          if (!view.mat) break
+          const locked = flipGateLocked(o, playerZ, speed)
+          const c = PHASE_COLORS[gateColor(o, playerZ, speed, t)]
+          const edgeMat = (view as ObstacleView & { edgeMat: THREE.MeshStandardMaterial }).edgeMat
+          view.mat.color.copy(c)
+          view.mat.emissive.copy(c)
+          view.mat.opacity = locked ? 0.42 : 0.12 + 0.2 * Math.abs(Math.sin(t * 14))
+          edgeMat.color.copy(c)
+          edgeMat.emissive.copy(c)
+          edgeMat.emissiveIntensity = locked ? 2.8 : 0.9
+          if (view.extra) view.extra.scale.set(1, locked ? 1 : 1 + Math.sin(t * 20) * 0.25, 1)
+          break
+        }
+        case 'autoGate':
+          if (view.extra) {
+            const s = 1 + Math.sin(t * 5 + o.id) * 0.04
+            view.extra.scale.set(s, s, 1)
+          }
+          break
+        case 'roller':
+          if (view.animated) view.animated.rotation.x = -t * 4
+          break
+        case 'fallingBlock': {
+          if (view.animated) view.animated.position.y = fallingBlockBottom(o, playerZ, speed) + FALLING_BLOCK_HEIGHT / 2
+          if (view.extra) {
+            const warn = fallingBlockWarning(o, playerZ, speed)
+            const mat = (view.extra as THREE.Mesh).material as THREE.MeshBasicMaterial
+            mat.opacity = 0.18 + warn * 0.45 * (0.6 + 0.4 * Math.sin(t * (10 + warn * 25)))
+          }
+          break
+        }
       }
     }
 

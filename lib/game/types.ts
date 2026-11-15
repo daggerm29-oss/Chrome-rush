@@ -28,6 +28,13 @@ export type ObstacleKind =
   | 'piston'
   | 'drone'
   | 'colorGate'
+  | 'flipGate'
+  | 'autoGate'
+  | 'block'
+  | 'tower'
+  | 'spikeField'
+  | 'roller'
+  | 'fallingBlock'
 
 export interface ObstacleSpec {
   id: number
