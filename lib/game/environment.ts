@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { createRng, type Rng } from './difficulty'
 import type { Quality } from './types'
 
-export const BIOME_LENGTH = 900
+export const BIOME_LENGTH = 650
 const BLEND_LENGTH = 140
 
 interface PartDef {

@@ -7,7 +7,7 @@ import { AudioEngine } from './audio'
 import { difficultyAt, PHYSICS, speedAt } from './difficulty'
 import { EnvironmentManager } from './environment'
 import { WorldGenerator } from './generator'
-import { obstacleClearance, obstacleHit } from './hazards'
+import { isMatchGate, obstacleClearance, obstacleHit } from './hazards'
 import { ParticleSystem } from './particles'
 import { PHASE_COLORS, PlayerModel } from './player-model'
 import { isSolid, PLATFORM_THICKNESS, platformColor, platformTop } from './surfaces'
@@ -526,7 +526,16 @@ export class GameEngine {
       }
       if (!o.passed && o.z < p.z - 0.4) {
         o.passed = true
-        if (o.kind === 'colorGate') {
+        if (o.kind === 'autoGate') {
+          if (p.phase !== o.color) {
+            p.phase = o.color
+            p.switchPulse = 1
+            p.lastSwitchAt = this.t
+            this.model.setPhase(o.color)
+            this.events.onToast('Auto-switch', o.color)
+          }
+          this.audio.play('switch')
+        } else if (isMatchGate(o.kind)) {
           this.addCombo(15)
           this.audio.play('gate')
         } else {
@@ -597,7 +606,7 @@ export class GameEngine {
       this.consumeShield()
       return true
     }
-    this.die(o.kind === 'colorGate' ? 'gate' : 'hazard')
+    this.die(isMatchGate(o.kind) ? 'gate' : 'hazard')
     return false
   }
 

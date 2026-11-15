@@ -7,6 +7,7 @@ import {
   singleJumpAirTime,
   speedAt,
 } from './difficulty'
+import { clearZoneAfter, isGate } from './hazards'
 import type {
   CrystalSpec,
   ObstacleKind,
@@ -28,6 +29,8 @@ type Pattern =
   | 'collapse'
   | 'gauntlet'
   | 'gates'
+  | 'hurdles'
+  | 'colorHops'
 
 interface Section {
   platforms: PlatformSpec[]
@@ -193,28 +196,30 @@ export class WorldGenerator {
   }
 
   private pickColor(d: number): SurfaceColor {
-    const coloredChance = 0.18 + 0.62 * d
+    const coloredChance = 0.25 + 0.65 * d
     if (!this.rng.chance(coloredChance)) return 'neutral'
-    const switchChance = 0.35 + 0.5 * d
+    const switchChance = 0.4 + 0.5 * d
     const c = this.rng.chance(switchChance) ? opposite(this.lastColor) : this.lastColor
     this.lastColor = c
     return c
   }
 
   private widthFor(d: number) {
-    return lerp(3.4, 1.6, Math.min(1, d * 1.1)) * this.rng.range(0.9, 1.1)
+    return lerp(3.4, 1.55, Math.min(1, d * 1.3)) * this.rng.range(0.9, 1.1)
   }
 
   private choosePattern(d: number): Pattern {
     return this.rng.weighted<Pattern>([
-      ['runway', lerp(3, 1, d)],
+      ['runway', lerp(2.5, 0.5, d)],
       ['gapChain', lerp(2.5, 3, d)],
-      ['stairs', d > 0.05 ? 1.4 : 0.4],
-      ['gates', d > 0.08 ? 1.2 : 0],
-      ['moving', d > 0.15 ? lerp(0.6, 1.6, d) : 0],
-      ['alternating', d > 0.2 ? lerp(0.6, 1.8, d) : 0],
-      ['collapse', d > 0.25 ? lerp(0.5, 1.4, d) : 0],
-      ['gauntlet', d > 0.35 ? lerp(0.6, 2, d) : 0],
+      ['stairs', d > 0.03 ? 1.4 : 0.4],
+      ['gates', d > 0.05 ? 1.3 : 0],
+      ['hurdles', d > 0.07 ? lerp(1, 2.2, d) : 0],
+      ['moving', d > 0.1 ? lerp(0.7, 1.7, d) : 0],
+      ['colorHops', d > 0.12 ? lerp(0.8, 2, d) : 0],
+      ['alternating', d > 0.14 ? lerp(0.8, 2, d) : 0],
+      ['collapse', d > 0.18 ? lerp(0.6, 1.5, d) : 0],
+      ['gauntlet', d > 0.22 ? lerp(0.8, 2.4, d) : 0],
     ])
   }
 
@@ -234,6 +239,10 @@ export class WorldGenerator {
         return this.buildRunway(d, true)
       case 'gates':
         return this.buildGates(d)
+      case 'hurdles':
+        return this.buildHurdles(d)
+      case 'colorHops':
+        return this.buildColorHops(d)
       case 'gapChain':
         return this.buildGapChain(d, 0)
       case 'stairs':
@@ -307,11 +316,66 @@ export class WorldGenerator {
     for (let i = 0; i < count; i++) {
       const z = p.z0 + before + i * spacing
       if (z > p.z1 - speed * 0.4) break
-      s.obstacles.push(this.makeObstacle('colorGate', z, p.y, color))
+      const kind: ObstacleKind = d > 0.28 && this.rng.chance(0.4) ? 'flipGate' : 'colorGate'
+      s.obstacles.push(this.makeObstacle(kind, z, p.y, color))
       color = this.rng.chance(0.5 + d * 0.4) ? opposite(color) : color
     }
     this.crystalArc(this.cursorZ, this.cursorY, p, speed, s)
     this.crystalLine(p, s)
+    return s
+  }
+
+  /** A rhythmic row of jump-over obstacles on one platform. */
+  private buildHurdles(d: number): Section {
+    const s = this.startSection()
+    const speed = speedAt(d)
+    const gap = this.nextGap(d, speed, 0, false)
+    const count = this.rng.int(3, 4 + Math.round(d * 4))
+    const kinds: ObstacleKind[] = ['block', 'spikes']
+    if (d > 0.1) kinds.push('roller')
+    if (d > 0.15) kinds.push('spikeField')
+    if (d > 0.2) kinds.push('fallingBlock')
+    if (d > 0.32) kinds.push('tower')
+    const before = speed * 0.8 + 3
+    let offset = before
+    const placed: { kind: ObstacleKind; offset: number }[] = []
+    for (let i = 0; i < count; i++) {
+      const kind = this.rng.pick(kinds)
+      placed.push({ kind, offset })
+      offset += speed * lerp(1.25, 1.0, d) + 3.5 + clearZoneAfter(kind, speed) + this.rng.range(0, 2)
+    }
+    const last = placed[placed.length - 1]
+    const len = last.offset + speed * 0.65 + 2 + clearZoneAfter(last.kind, speed)
+    const p = this.makePlatform(this.cursorZ + gap, len, this.cursorY, this.pickColor(d), 'static', this.widthFor(d), {
+      hasFrame: false,
+    })
+    s.platforms.push(p)
+    for (const { kind, offset: o } of placed) s.obstacles.push(this.makeObstacle(kind, p.z0 + o, p.y))
+    this.crystalArc(this.cursorZ, this.cursorY, p, speed, s)
+    this.crystalLine(p, s)
+    return s
+  }
+
+  /** A short chain of small platforms that always alternate colour, forcing a phase switch each hop. */
+  private buildColorHops(d: number): Section {
+    const s = this.startSection()
+    const speed = speedAt(d)
+    const n = this.rng.int(3, 4 + Math.round(d * 3))
+    let z = this.cursorZ
+    let y = this.cursorY
+    let color: Phase = this.rng.chance(0.6) ? opposite(this.lastColor) : this.lastColor
+    for (let i = 0; i < n; i++) {
+      const ny = this.clampY(y + this.rng.range(-0.8, lerp(0.4, 1.0, d)))
+      const gap = this.nextGap(d, speed, ny - y, true)
+      const len = this.rng.range(speed * 0.5 + 3.5, speed * 0.85 + 5)
+      const p = this.makePlatform(z + gap, len, ny, color, 'static', this.widthFor(d), { hasFrame: false })
+      s.platforms.push(p)
+      this.crystalArc(z, y, p, speed, s)
+      this.lastColor = color
+      color = opposite(color)
+      z = p.z1
+      y = ny
+    }
     return s
   }
 
@@ -376,7 +440,7 @@ export class WorldGenerator {
     const speed = speedAt(d)
     const gap = this.nextGap(d, speed, 0, false)
     const len = this.rng.range(speed * 1.4, speed * lerp(2, 3, d))
-    const period = this.rng.range(lerp(2.2, 0.95, d), lerp(2.6, 1.3, d))
+    const period = this.rng.range(lerp(2.2, 1.25, d), lerp(2.6, 1.6, d))
     const p = this.makePlatform(this.cursorZ + gap, len, this.cursorY, 'solar', 'alternating', this.widthFor(d), {
       period,
       phaseOffset: this.rng.range(0, period * 2),
@@ -428,31 +492,45 @@ export class WorldGenerator {
 
   private populateObstacles(p: PlatformSpec, d: number, speed: number, s: Section, densityScale: number) {
     const before = speed * 0.8 + 3
-    const after = speed * 0.65 + 2
-    const spacing = speed * lerp(1.6, 1.15, d) + 3
+    const after = speed * 0.75 + 3
+    const spacing = speed * lerp(1.5, 1.05, d) + 2.5
     const usable = p.z1 - after - (p.z0 + before)
     if (usable <= 0) return
-    const density = (0.5 + 3.2 * d) * densityScale
-    const target = Math.min(Math.floor(usable / spacing) + 1, Math.round((usable / 100) * density * 3 + (d > 0.05 ? 1 : 0)))
+    const density = (0.8 + 3.6 * d) * densityScale
+    const target = Math.min(Math.floor(usable / spacing) + 1, Math.round((usable / 100) * density * 3 + (d > 0.03 ? 1 : 0)))
     let z = p.z0 + before + this.rng.range(0, spacing * 0.3)
     let placed = 0
     while (z < p.z1 - after && placed < target) {
       const kind = this.rng.weighted<ObstacleKind>([
-        ['spikes', 3],
-        ['saw', d > 0.12 ? 2 : 0.5],
-        ['lowLaser', d > 0.06 ? 2 : 0],
-        ['highBarrier', d > 0.18 ? 1.6 : 0],
-        ['piston', d > 0.3 ? 1.4 : 0],
-        ['drone', d > 0.25 ? 1.6 : 0],
-        ['colorGate', d > 0.12 ? 1.4 : 0],
+        ['spikes', lerp(3, 1.4, d)],
+        ['block', d > 0.03 ? 2.2 : 0],
+        ['saw', d > 0.08 ? 2 : 0.4],
+        ['lowLaser', d > 0.05 ? 2 : 0],
+        ['roller', d > 0.1 ? 1.6 : 0],
+        ['colorGate', d > 0.08 ? 1.3 : 0],
+        ['highBarrier', d > 0.12 ? 1.6 : 0],
+        ['spikeField', d > 0.15 ? 1.5 : 0],
+        ['drone', d > 0.18 ? 1.6 : 0],
+        ['fallingBlock', d > 0.2 ? 1.6 : 0],
+        ['piston', d > 0.22 ? 1.4 : 0],
+        ['autoGate', d > 0.25 ? 0.9 : 0],
+        ['flipGate', d > 0.28 ? 1.3 : 0],
+        ['tower', d > 0.32 ? 1.4 : 0],
       ])
       const o = this.makeObstacle(kind, z, p.y, this.rng.chance(0.5) ? 'solar' : 'ion')
       if (kind === 'drone') o.variant = this.rng.chance(0.5) ? 'low' : 'high'
       if (kind === 'saw' || kind === 'spikes') o.big = d > 0.5 && this.rng.chance(0.35)
-      if (kind === 'colorGate' && p.color !== 'neutral') o.color = this.rng.chance(0.6) ? opposite(p.color) : p.color
+      if ((kind === 'colorGate' || kind === 'flipGate') && p.color !== 'neutral') {
+        o.color = this.rng.chance(0.6) ? opposite(p.color) : p.color
+      }
+      if (kind === 'autoGate') {
+        // Never repaint the player onto the wrong colour of a coloured platform.
+        if (p.color !== 'neutral') o.color = p.color
+        else this.lastColor = o.color
+      }
       s.obstacles.push(o)
       placed++
-      z += spacing * this.rng.range(1, 1.4)
+      z += spacing * this.rng.range(1, 1.4) + clearZoneAfter(kind, speed)
     }
   }
 
@@ -530,20 +608,22 @@ export class WorldGenerator {
       }
       const minLanding = p.kind === 'collapsing' ? speed * 0.3 : speed * 0.45 + 3
       if (p.z1 - p.z0 < minLanding) return false
-      if (p.kind === 'alternating' && p.period < 0.9) return false
+      if (p.kind === 'alternating' && p.period < 1.1) return false
       prevZ = p.z1
       prevY = p.y
     }
     const sorted = [...s.obstacles].sort((a, b) => a.z - b.z)
     for (let i = 1; i < sorted.length; i++) {
-      const minGap = sorted[i - 1].kind === 'colorGate' && sorted[i].kind === 'colorGate' ? speed * 0.7 : speed * 0.95
-      if (sorted[i].z - sorted[i - 1].z < minGap) return false
+      const prev = sorted[i - 1]
+      const bothGates = isGate(prev.kind) && isGate(sorted[i].kind)
+      const minGap = bothGates ? speed * 0.7 : speed * 0.95 + clearZoneAfter(prev.kind, speed)
+      if (sorted[i].z - prev.z < minGap) return false
     }
     for (const o of sorted) {
       const host = s.platforms.find((p) => o.z >= p.z0 && o.z <= p.z1)
       if (!host || host.kind !== 'static') return false
       if (o.z - host.z0 < speed * 0.6 + 2) return false
-      if (host.z1 - o.z < speed * 0.4 + 1) return false
+      if (host.z1 - o.z < speed * 0.4 + 1 + clearZoneAfter(o.kind, speed)) return false
       if ((o.kind === 'spikes' || o.kind === 'saw') && (o.big ? 1.7 : 1.1) > SINGLE_JUMP_HEIGHT * 0.85) return false
     }
     return true

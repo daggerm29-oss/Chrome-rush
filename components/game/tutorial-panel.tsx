@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowUp, Heart, RefreshCw, Sparkles } from 'lucide-react'
+import { ArrowUp, Flame, Heart, RefreshCw, Sparkles, Zap } from 'lucide-react'
 import { Panel } from './panel'
 
 interface TutorialPanelProps {
@@ -26,6 +26,18 @@ const STEPS = [
     title: 'Chain combos',
     body: 'Crystals, near misses, perfect landings and colour gates build your multiplier up to x5. Grab power-ups for magnets, shields and more.',
     color: '#ff4fd8',
+  },
+  {
+    icon: Zap,
+    title: 'Colour-shifting tiles',
+    body: 'The rails of a shifting tile show the colour it will become next. When the whole tile starts flashing, it is about to flip, so switch phase to match.',
+    color: '#facc15',
+  },
+  {
+    icon: Flame,
+    title: 'Learn the hazards',
+    body: 'Hop blocks, rollers, spike fields and falling blocks (watch the red pad). Double jump towers. Flickering gates lock their colour just before you reach them. Rings repaint you automatically.',
+    color: '#fb923c',
   },
   {
     icon: Heart,

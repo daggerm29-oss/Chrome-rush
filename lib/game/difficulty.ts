@@ -40,13 +40,13 @@ export const PHYSICS = {
   maxSpeed: 24.5,
 } as const
 
-/** Continuous 0..1 difficulty curve. ~0.1 at 30s, ~0.33 at 2min, ~0.63 at 5min, ~0.91 at 12min. */
+/** Continuous 0..1 difficulty curve. ~0.22 at 30s, ~0.39 at 1min, ~0.63 at 2min, ~0.86 at 4min. */
 export function difficultyAt(seconds: number) {
-  return 1 - Math.exp(-seconds / 300)
+  return 1 - Math.exp(-seconds / 120)
 }
 
 export function speedAt(difficulty: number) {
-  return PHYSICS.minSpeed + (PHYSICS.maxSpeed - PHYSICS.minSpeed) * Math.pow(difficulty, 0.9)
+  return PHYSICS.minSpeed + (PHYSICS.maxSpeed - PHYSICS.minSpeed) * Math.pow(difficulty, 0.75)
 }
 
 /** Time (s) the player is airborne using a full double jump at apex, returning to height dy relative to takeoff. */
