@@ -12,7 +12,6 @@ interface SettingsPanelProps {
 }
 
 const QUALITIES: { value: QualitySetting; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },

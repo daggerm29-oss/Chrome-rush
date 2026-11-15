@@ -15,7 +15,7 @@ const KEY = 'chroma.settings'
 export const DEFAULT_SETTINGS: GameSettings = {
   music: 0.6,
   sfx: 0.8,
-  quality: 'auto',
+  quality: 'high',
   haptics: true,
   tutorialSeen: false,
 }
@@ -23,7 +23,10 @@ export const DEFAULT_SETTINGS: GameSettings = {
 export function loadSettings(): GameSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS
   try {
-    return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<GameSettings>) }
+    const merged = { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<GameSettings>) }
+    // 'auto' was the old default and silently dropped players to low; it is no longer offered.
+    if (merged.quality === 'auto') merged.quality = 'high'
+    return merged
   } catch {
     return DEFAULT_SETTINGS
   }
