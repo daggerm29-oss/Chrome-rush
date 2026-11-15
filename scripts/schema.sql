@@ -32,3 +32,20 @@ create table if not exists game_runs (
 create index if not exists players_best_score_idx on players (best_score desc, created_at);
 create index if not exists game_runs_daily_idx on game_runs (created_at desc) where valid;
 create index if not exists game_runs_player_idx on game_runs (player_id, created_at desc);
+
+-- Telegram group features
+alter table game_runs add column if not exists chat_id text;
+create index if not exists game_runs_chat_score_idx on game_runs (chat_id, score desc) where valid and chat_id is not null;
+
+create table if not exists tg_groups (
+  chat_id text primary key,
+  title text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists tg_play_notices (
+  chat_id text not null,
+  player_id text not null,
+  notified_at timestamptz not null default now(),
+  primary key (chat_id, player_id)
+);

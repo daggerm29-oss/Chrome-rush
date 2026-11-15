@@ -1,11 +1,23 @@
 import 'server-only'
-import { verifyInitData } from './telegram/verify'
+import { verifyInitDataFull } from './telegram/verify'
 
 export interface PlayerIdentity {
   id: string
   displayName: string
   username: string | null
   source: 'telegram' | 'guest'
+  /** Group the Mini App was opened from (from the signed start_param); unverified until checked against tg_groups. */
+  groupChatId: string | null
+}
+
+/** Group deep links carry the chat id as `g<digits>` with a leading `n` standing in for the minus sign. */
+export function groupParam(chatId: number | string) {
+  return `g${String(chatId).replace('-', 'n')}`
+}
+
+function parseGroupParam(param: string | null): string | null {
+  const match = param?.match(/^g(n?)(\d{5,16})$/)
+  return match ? `${match[1] ? '-' : ''}${match[2]}` : null
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -30,14 +42,16 @@ export function resolveIdentity(headers: Headers): PlayerIdentity | null {
   if (initData) {
     // Never fall back to a guest identity when Telegram data is present but invalid or expired;
     // that would silently credit the run to a different account.
-    const user = token ? verifyInitData(initData, token) : null
-    if (!user) return null
+    const verified = token ? verifyInitDataFull(initData, token) : null
+    if (!verified) return null
+    const { user, startParam } = verified
     const full = [user.first_name, user.last_name].filter(Boolean).join(' ')
     return {
       id: `tg:${user.id}`,
-      displayName: sanitizeName(full || user.username, `Pilot ${String(user.id).slice(-4)}`),
+      displayName: sanitizeName(full || user.username, `Player ${String(user.id).slice(-4)}`),
       username: user.username ?? null,
       source: 'telegram',
+      groupChatId: parseGroupParam(startParam),
     }
   }
 
@@ -54,6 +68,7 @@ export function resolveIdentity(headers: Headers): PlayerIdentity | null {
       displayName: sanitizeName(name, `Runner ${guestId.slice(0, 4).toUpperCase()}`),
       username: null,
       source: 'guest',
+      groupChatId: null,
     }
   }
   return null

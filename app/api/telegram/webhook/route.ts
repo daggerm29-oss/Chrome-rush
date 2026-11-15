@@ -1,10 +1,11 @@
 import crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getLeaderboard, getPlayerStats } from '@/lib/leaderboard'
+import { escapeHtml, playKeyboard, registerGroup, tgCall } from '@/lib/telegram/notify'
 
 interface TgMessage {
   message_id: number
-  chat: { id: number; type: string }
+  chat: { id: number; type: string; title?: string }
   from?: { id: number; first_name: string; username?: string }
   text?: string
 }
@@ -14,30 +15,16 @@ interface TgUpdate {
   message?: TgMessage
 }
 
-function appUrl(req: Request) {
-  return process.env.TELEGRAM_WEB_APP_URL ?? new URL('/', req.url).toString()
-}
+const fmt = (n: number) => n.toLocaleString('en-US')
 
-async function tg(method: string, payload: Record<string, unknown>) {
-  const token = process.env.TELEGRAM_BOT_TOKEN
-  if (!token) return
-  await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+function keyboardFor(req: Request, chat: TgMessage['chat']) {
+  if (chat.type === 'private') {
+    const url = process.env.TELEGRAM_WEB_APP_URL ?? new URL('/', req.url).toString()
+    return { inline_keyboard: [[{ text: 'Play Chroma Rush', web_app: { url } }]] }
+  }
+  // web_app buttons only work in private chats; groups get a deep link that records which group the run came from.
+  return playKeyboard(chat.id)
 }
-
-function playButton(req: Request, chatType: string) {
-  const url = appUrl(req)
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME
-  const shortName = process.env.NEXT_PUBLIC_TELEGRAM_APP_SHORT_NAME
-  // web_app buttons only work in private chats; groups get a deep link to the Mini App.
-  if (chatType === 'private') return { text: 'Play Chroma Rush', web_app: { url } }
-  return { text: 'Play Chroma Rush', url: botUsername ? (shortName ? `https://t.me/${botUsername}/${shortName}` : `https://t.me/${botUsername}?startapp=play`) : url }
-}
-
-const escape = (s: string) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]!)
 
 export async function POST(req: Request) {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET
@@ -62,46 +49,49 @@ export async function POST(req: Request) {
 
   const command = text.split(/\s+/)[0].split('@')[0].toLowerCase()
   const chatId = msg.chat.id
-  const keyboard = { inline_keyboard: [[playButton(req, msg.chat.type)]] }
+  const reply_markup = keyboardFor(req, msg.chat)
 
   try {
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+      await registerGroup(chatId, msg.chat.title)
+    }
+
     switch (command) {
       case '/start':
-      case '/play':
-        await tg('sendMessage', {
+      case '/playchroma':
+        await tgCall('sendMessage', {
           chat_id: chatId,
           parse_mode: 'HTML',
           text:
             '<b>Chroma Rush</b>\nRun across floating worlds, switch between <b>Solar</b> and <b>Ion</b> phases, and never touch the wrong colour.\n\nYou have 3 lives per run. How far can you go?',
-          reply_markup: keyboard,
+          reply_markup,
         })
         break
       case '/stats': {
         const stats = msg.from ? await getPlayerStats(`tg:${msg.from.id}`) : null
-        await tg('sendMessage', {
+        await tgCall('sendMessage', {
           chat_id: chatId,
           parse_mode: 'HTML',
           text: stats
-            ? `<b>${escape(stats.displayName)}</b>\nBest score: <b>${stats.bestScore.toLocaleString('en-US')}</b>\nBest distance: ${stats.bestDistance.toLocaleString('en-US')} m\nGames played: ${stats.totalGames}\nCrystals collected: ${stats.totalCrystals.toLocaleString('en-US')}\nGlobal rank: ${stats.rank ? `#${stats.rank}` : 'unranked'}`
+            ? `<b>${escapeHtml(stats.displayName)}</b>\nBest score: <b>${fmt(stats.bestScore)}</b>\nBest distance: ${fmt(stats.bestDistance)} m\nGames played: ${stats.totalGames}\nCrystals collected: ${fmt(stats.totalCrystals)}\nGlobal rank: ${stats.rank ? `#${stats.rank}` : 'unranked'}`
             : 'No runs yet. Tap below to play your first run.',
-          reply_markup: keyboard,
+          reply_markup,
         })
         break
       }
-      case '/leaderboard':
-      case '/top': {
+      case '/topplayers': {
         const { entries } = await getLeaderboard('all', null, 10)
         const lines = entries.length
-          ? entries.map((e) => `${e.rank}. ${escape(e.name)} - <b>${e.score.toLocaleString('en-US')}</b> (${e.distance.toLocaleString('en-US')} m)`).join('\n')
+          ? entries.map((e) => `${e.rank}. ${escapeHtml(e.name)} - <b>${fmt(e.score)}</b> (${fmt(e.distance)} m)`).join('\n')
           : 'No scores yet. Be the first!'
-        await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: `<b>Global Top 10</b>\n${lines}`, reply_markup: keyboard })
+        await tgCall('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: `<b>Top Players</b>\n${lines}`, reply_markup })
         break
       }
       case '/help':
-        await tg('sendMessage', {
+        await tgCall('sendMessage', {
           chat_id: chatId,
-          text: 'Commands:\n/play - open the game\n/stats - your stats\n/leaderboard - global top 10\n/help - this message\n\nControls: tap JUMP (tap again mid-air to double jump), tap SWITCH to change colour.',
-          reply_markup: keyboard,
+          text: 'Commands:\n/playchroma - open the game\n/topplayers - global top 10\n/stats - your stats\n/help - this message\n\nControls: tap JUMP (tap again mid-air to double jump), tap SWITCH to change colour.',
+          reply_markup,
         })
         break
     }

@@ -15,6 +15,14 @@ export interface TelegramUser {
  * https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
  */
 export function verifyInitData(initData: string, botToken: string, maxAgeSeconds = 60 * 60 * 24): TelegramUser | null {
+  return verifyInitDataFull(initData, botToken, maxAgeSeconds)?.user ?? null
+}
+
+export function verifyInitDataFull(
+  initData: string,
+  botToken: string,
+  maxAgeSeconds = 60 * 60 * 24,
+): { user: TelegramUser; startParam: string | null } | null {
   if (!initData || !botToken) return null
   const params = new URLSearchParams(initData)
   const hash = params.get('hash')
@@ -36,7 +44,7 @@ export function verifyInitData(initData: string, botToken: string, maxAgeSeconds
   try {
     const user = JSON.parse(params.get('user') ?? 'null') as TelegramUser | null
     if (!user || typeof user.id !== 'number') return null
-    return user
+    return { user, startParam: params.get('start_param') }
   } catch {
     return null
   }

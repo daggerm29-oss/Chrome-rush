@@ -4,9 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import {
   apiFetcher,
-  getGuestName,
+  notifyPlaying,
   type PlayerStatsDto,
-  setGuestName,
   type SubmitResponse,
   submitRun,
 } from '@/lib/client/api'
@@ -42,14 +41,16 @@ export function GameApp() {
   const [portrait, setPortrait] = useState(false)
   const [rotateDismissed, setRotateDismissed] = useState(false)
   const [telegram, setTelegram] = useState<{ active: boolean; name: string | null }>({ active: false, name: null })
-  const [guestName, setGuestNameState] = useState(() => getGuestName())
   const startAfterTutorial = useRef(false)
   const settingsRef = useRef(settings)
   settingsRef.current = settings
   const toastId = useRef(0)
 
   const { mutate } = useSWRConfig()
-  const { data: playerData, mutate: mutatePlayer } = useSWR<{ stats: PlayerStatsDto | null }>('/api/player', apiFetcher)
+  const { data: playerData, mutate: mutatePlayer } = useSWR<{ identity?: { displayName: string }; stats: PlayerStatsDto | null }>(
+    '/api/player',
+    apiFetcher,
+  )
 
   const pushToast = useCallback((text: string, tone: ToastTone) => {
     const id = ++toastId.current
@@ -137,6 +138,7 @@ export function GameApp() {
     setDeath(null)
     setPanel(null)
     engine.startRun()
+    notifyPlaying()
   }, [])
 
   const handlePlay = useCallback(() => {
@@ -219,13 +221,7 @@ export function GameApp() {
       {mode === 'menu' && (
         <MainMenu
           stats={playerData?.stats}
-          isTelegram={telegram.active}
-          telegramName={telegram.name}
-          guestName={guestName}
-          onGuestNameChange={(name) => {
-            setGuestName(name)
-            setGuestNameState(name)
-          }}
+          name={telegram.name ?? playerData?.identity?.displayName ?? null}
           onPlay={handlePlay}
           onLeaderboard={() => setPanel('leaderboard')}
           onSettings={() => setPanel('settings')}
