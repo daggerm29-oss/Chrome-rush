@@ -200,7 +200,8 @@ export function GameApp() {
   const handleShare = useCallback(async () => {
     if (!result) return
     const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-    const url = bot ? `https://t.me/${bot}?startapp=play` : window.location.origin
+    const shortName = process.env.NEXT_PUBLIC_TELEGRAM_APP_SHORT_NAME
+    const url = bot ? (shortName ? `https://t.me/${bot}/${shortName}` : `https://t.me/${bot}?startapp=play`) : window.location.origin
     const outcome = await shareScore(
       `I scored ${result.score.toLocaleString('en-US')} and ran ${result.distance.toLocaleString('en-US')} m in Chroma Rush. Can you beat me?`,
       url,

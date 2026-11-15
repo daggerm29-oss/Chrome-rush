@@ -31,9 +31,10 @@ async function tg(method: string, payload: Record<string, unknown>) {
 function playButton(req: Request, chatType: string) {
   const url = appUrl(req)
   const botUsername = process.env.TELEGRAM_BOT_USERNAME
+  const shortName = process.env.NEXT_PUBLIC_TELEGRAM_APP_SHORT_NAME
   // web_app buttons only work in private chats; groups get a deep link to the Mini App.
   if (chatType === 'private') return { text: 'Play Chroma Rush', web_app: { url } }
-  return { text: 'Play Chroma Rush', url: botUsername ? `https://t.me/${botUsername}?startapp=play` : url }
+  return { text: 'Play Chroma Rush', url: botUsername ? (shortName ? `https://t.me/${botUsername}/${shortName}` : `https://t.me/${botUsername}?startapp=play`) : url }
 }
 
 const escape = (s: string) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]!)
